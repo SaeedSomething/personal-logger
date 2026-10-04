@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - dev
+      - main
+      - "feat/**"
+      - "fix/**"
+      - "hotfix/**"
+      - "release/**"
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Test versioning scripts
+        shell: pwsh
+        run: ./scripts/test-versioning.ps1
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Test Logger.Core
+        run: dotnet test Logger.Core.Tests/Logger.Core.Tests.csproj -c Release --verbosity minimal
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Build Windows app
+        run: dotnet build Logger.Windows/Logger.Windows.csproj -c Release --verbosity minimal

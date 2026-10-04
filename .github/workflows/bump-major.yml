@@ -1,0 +1,20 @@
+name: Bump major version
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-main
+  cancel-in-progress: false
+
+jobs:
+  release:
+    uses: ./.github/workflows/release-pipeline.yml
+    with:
+      bump: major
+    permissions:
+      contents: write
+    secrets: inherit

@@ -1,0 +1,24 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+  pull-requests: read
+
+concurrency:
+  group: release-main
+  cancel-in-progress: false
+
+jobs:
+  release:
+    uses: ./.github/workflows/release-pipeline.yml
+    with:
+      bump: auto
+    permissions:
+      contents: write
+      pull-requests: read
+    secrets: inherit

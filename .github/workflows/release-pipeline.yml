@@ -1,0 +1,304 @@
+name: Release pipeline
+
+on:
+  workflow_call:
+    inputs:
+      bump:
+        description: auto, major, minor, or patch
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: read
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.plan.outputs.tag }}
+      version: ${{ steps.plan.outputs.version }}
+      version_code: ${{ steps.plan.outputs.version_code }}
+      committed: ${{ steps.publish.outputs.committed }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Choose bump
+        id: resolve
+        shell: pwsh
+        env:
+          BUMP_INPUT: ${{ inputs.bump }}
+        run: |
+          if ($env:BUMP_INPUT -eq 'auto') {
+            ./scripts/resolve-release-bump.ps1
+            exit 0
+          }
+          if ($env:BUMP_INPUT -notin @('major', 'minor', 'patch')) {
+            throw "Unexpected bump '$env:BUMP_INPUT'."
+          }
+          . ./scripts/Versioning.ps1
+          Write-Host $env:BUMP_INPUT
+          Write-GitHubOutputValue 'bump' $env:BUMP_INPUT
+
+      - name: Prepare product version
+        id: plan
+        if: steps.resolve.outputs.bump != 'skip'
+        shell: pwsh
+        run: ./scripts/prepare-release.ps1 -Bump ${{ steps.resolve.outputs.bump }}
+
+      - name: Commit and tag
+        id: publish
+        if: steps.resolve.outputs.bump != 'skip' && steps.plan.outputs.action == 'prepare'
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ steps.plan.outputs.tag }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          $committed = 'false'
+          $status = @(git status --porcelain)
+          if ($status.Count -gt 0) {
+            git add -u
+            git commit -m "chore: release $env:RELEASE_TAG [skip ci]"
+            if ($LASTEXITCODE -ne 0) { throw 'git commit failed.' }
+            $committed = 'true'
+          }
+
+          $existing = @(git tag --list $env:RELEASE_TAG)
+          if ($existing.Count -gt 0) { throw "Tag $env:RELEASE_TAG already exists." }
+          git tag $env:RELEASE_TAG
+          git push origin HEAD:main
+          if ($LASTEXITCODE -ne 0) { throw 'Pushing main failed.' }
+          git push origin "refs/tags/$env:RELEASE_TAG"
+          if ($LASTEXITCODE -ne 0) { throw "Pushing $env:RELEASE_TAG failed." }
+
+          "committed=$committed" | ForEach-Object {
+            $encoding = New-Object System.Text.UTF8Encoding $false
+            [System.IO.File]::AppendAllText($env:GITHUB_OUTPUT, "$_`n", $encoding)
+          }
+
+  sync-dev:
+    needs: version
+    if: needs.version.outputs.committed == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Merge the release into dev
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ needs.version.outputs.tag }}
+        run: |
+          $ErrorActionPreference = 'Continue'
+          git ls-remote --exit-code --heads origin dev | Out-Null
+          $devExists = $LASTEXITCODE -eq 0
+          $ErrorActionPreference = 'Stop'
+          if (-not $devExists) {
+            Write-Host 'origin/dev does not exist; skipping.'
+            exit 0
+          }
+          git fetch origin dev
+          if ($LASTEXITCODE -ne 0) { throw 'Fetching dev failed.' }
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B dev origin/dev
+          git merge origin/main -m "chore: merge $env:RELEASE_TAG into dev [skip ci]"
+          if ($LASTEXITCODE -ne 0) { throw 'Merging main into dev failed.' }
+          git push origin dev
+          if ($LASTEXITCODE -ne 0) { throw 'Pushing dev failed.' }
+
+  build:
+    needs: version
+    if: needs.version.outputs.tag
+    runs-on: windows-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check out release tag
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ needs.version.outputs.tag }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $found = $false
+          foreach ($try in 1..6) {
+            git fetch origin "refs/tags/${env:RELEASE_TAG}:refs/tags/${env:RELEASE_TAG}"
+            if ($LASTEXITCODE -eq 0) { $found = $true; break }
+            Start-Sleep -Seconds 5
+          }
+          if (-not $found) { throw "Tag $env:RELEASE_TAG was not found on origin." }
+          git checkout --detach $env:RELEASE_TAG
+          if ($LASTEXITCODE -ne 0) { throw "Could not check out $env:RELEASE_TAG." }
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Test
+        run: dotnet test Logger.Core.Tests/Logger.Core.Tests.csproj -c Release --verbosity minimal
+
+      - name: Publish Windows app
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          dotnet publish Logger.Windows/Logger.Windows.csproj `
+            -c Release `
+            -r win-x64 `
+            --self-contained true `
+            -o artifacts/win-publish `
+            -p:PublishSingleFile=true `
+            -p:IncludeNativeLibrariesForSelfExtract=true `
+            -p:IncludeAllContentForSelfExtract=true `
+            -p:EnableCompressionInSingleFile=true `
+            -p:DebugType=none `
+            -p:DebugSymbols=false `
+            -p:Version=$env:RELEASE_VERSION `
+            -p:FileVersion="$env:RELEASE_VERSION.0" `
+            -p:InformationalVersion=$env:RELEASE_VERSION
+          if ($LASTEXITCODE -ne 0) { throw 'Windows publish failed.' }
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          choco install innosetup --no-progress -y
+          if ($LASTEXITCODE -ne 0) { throw 'Inno Setup install failed.' }
+
+      - name: Build Windows installer
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $iscc = @(
+            "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
+            "$env:ProgramFiles\Inno Setup 6\ISCC.exe"
+          ) | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $iscc) { throw 'ISCC.exe was not found.' }
+          & $iscc "/DMyAppVersion=$env:RELEASE_VERSION" installer\Logger.iss
+          if ($LASTEXITCODE -ne 0) { throw 'Inno Setup compilation failed.' }
+          $setup = "artifacts\Logger-Setup-$env:RELEASE_VERSION.exe"
+          if (-not (Test-Path $setup)) { throw "Installer was not created: $setup" }
+
+      - name: Install Android workload
+        run: dotnet workload install android
+
+      - name: Publish Android APK
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ needs.version.outputs.version }}
+          RELEASE_VERSION_CODE: ${{ needs.version.outputs.version_code }}
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $keystore = Join-Path $env:RUNNER_TEMP 'logger.keystore'
+          $alias = 'logger'
+          $storePass = 'android'
+          $keyPass = 'android'
+
+          if ($env:ANDROID_KEYSTORE_BASE64) {
+            [System.IO.File]::WriteAllBytes($keystore, [Convert]::FromBase64String($env:ANDROID_KEYSTORE_BASE64))
+            $alias = $env:ANDROID_KEY_ALIAS
+            $storePass = $env:ANDROID_KEYSTORE_PASSWORD
+            $keyPass = $env:ANDROID_KEY_PASSWORD
+            Write-Host "::add-mask::$storePass"
+            Write-Host "::add-mask::$keyPass"
+          } else {
+            Write-Host 'ANDROID_KEYSTORE_BASE64 is not set. The APK is signed with a throwaway key, so it will not upgrade a previous install.'
+            $keytool = $null
+            $javaKeytool = Join-Path $env:JAVA_HOME 'bin\keytool.exe'
+            if ($env:JAVA_HOME -and (Test-Path $javaKeytool)) {
+              $keytool = $javaKeytool
+            } elseif (Get-Command keytool -ErrorAction SilentlyContinue) {
+              $keytool = (Get-Command keytool).Source
+            } else {
+              throw 'keytool was not found. Set JAVA_HOME or provide ANDROID_KEYSTORE_BASE64.'
+            }
+            & $keytool -genkeypair -keystore $keystore -storetype PKCS12 -alias $alias -keyalg RSA -keysize 2048 -validity 10000 -storepass $storePass -keypass $keyPass -dname 'CN=Personal Logger, OU=CI, O=Personal Logger, C=US'
+            if ($LASTEXITCODE -ne 0) { throw 'keytool failed.' }
+          }
+
+          dotnet publish Logger.Android/Logger.Android.csproj `
+            -c Release `
+            -f net10.0-android `
+            -p:AndroidPackageFormat=apk `
+            -p:PublishTrimmed=false `
+            -p:AndroidKeyStore=true `
+            -p:AndroidSigningKeyStore=$keystore `
+            -p:AndroidSigningKeyAlias=$alias `
+            -p:AndroidSigningStorePass=$storePass `
+            -p:AndroidSigningKeyPass=$keyPass `
+            -p:ApplicationDisplayVersion=$env:RELEASE_VERSION `
+            -p:ApplicationVersion=$env:RELEASE_VERSION_CODE `
+            -p:Version=$env:RELEASE_VERSION `
+            -p:InformationalVersion=$env:RELEASE_VERSION
+          if ($LASTEXITCODE -ne 0) { throw 'Android publish failed.' }
+
+          $apks = @(Get-ChildItem -Path 'Logger.Android\bin' -Recurse -Filter '*.apk' | Where-Object {
+              $_.Name -notmatch 'Unaligned' -and $_.FullName -match '[\\/]publish[\\/]'
+            })
+          if ($apks.Count -eq 0) {
+            $apks = @(Get-ChildItem -Path 'Logger.Android\bin' -Recurse -Filter '*.apk' | Where-Object { $_.Name -notmatch 'Unaligned' })
+          }
+          if ($apks.Count -eq 0) { throw 'No APK was produced.' }
+
+          if ($apks.Count -eq 1) {
+            Copy-Item $apks[0].FullName "artifacts\Logger-$env:RELEASE_VERSION.apk" -Force
+          } else {
+            foreach ($apk in $apks) {
+              $abi = 'android'
+              if ($apk.FullName -match 'android-(arm64|arm|x64|x86)') { $abi = $Matches[1] }
+              Copy-Item $apk.FullName "artifacts\Logger-$env:RELEASE_VERSION-$abi.apk" -Force
+            }
+          }
+
+      - name: Publish GitHub release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ needs.version.outputs.tag }}
+          RELEASE_VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $files = @(Get-ChildItem artifacts -File | Where-Object { $_.Extension -in '.apk', '.exe' })
+          if ($files.Count -eq 0) { throw 'No release files were produced.' }
+          $paths = @($files | ForEach-Object { $_.FullName })
+
+          gh release view $env:RELEASE_TAG --json tagName 2>$null | Out-Null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $env:RELEASE_TAG @paths --clobber
+          } else {
+            gh release create $env:RELEASE_TAG @paths --title $env:RELEASE_TAG --generate-notes --target main
+          }
+          if ($LASTEXITCODE -ne 0) { throw 'Creating the GitHub release failed.' }
+
+          $names = ($files | ForEach-Object { $_.Name }) -join ', '
+          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "Released **$env:RELEASE_TAG** with $names."
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: logger-${{ needs.version.outputs.version }}
+          path: |
+            artifacts/*.exe
+            artifacts/*.apk
+          if-no-files-found: error

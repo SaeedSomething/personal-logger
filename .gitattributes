@@ -1,0 +1,2 @@
+.githooks/pre-commit text eol=lf
+*.ps1 text eol=crlf

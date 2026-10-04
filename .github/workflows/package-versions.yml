@@ -1,0 +1,66 @@
+name: Package versions
+
+on:
+  push:
+    branches:
+      - dev
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches:
+      - dev
+      - main
+
+permissions:
+  contents: write
+
+concurrency:
+  group: package-versions-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  bump:
+    if: >-
+      (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) &&
+      !contains(github.event.head_commit.message, 'chore: bump package versions')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.head_ref || github.ref_name }}
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Bump package versions
+        shell: pwsh
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          if ($env:EVENT_NAME -eq 'pull_request') {
+            git fetch origin $env:BASE_REF
+            if ($LASTEXITCODE -ne 0) { throw "Could not fetch origin/$env:BASE_REF." }
+            ./scripts/bump-package-versions.ps1 -Mode apply -BaseRef "origin/$env:BASE_REF" -Stage
+          } elseif ($env:BEFORE -and $env:BEFORE -notmatch '^0+$') {
+            ./scripts/bump-package-versions.ps1 -Mode apply -BaseRef $env:BEFORE -Stage
+          } else {
+            git rev-parse --verify --quiet HEAD~1 | Out-Null
+            if ($LASTEXITCODE -ne 0) {
+              Write-Host 'No parent commit; skipping package version bump.'
+              exit 0
+            }
+            ./scripts/bump-package-versions.ps1 -Mode apply -BaseRef HEAD~1 -Stage
+          }
+
+      - name: Commit package version bumps
+        shell: pwsh
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          $staged = @(git diff --cached --name-only)
+          if ($staged.Count -eq 0) {
+            Write-Host 'Package versions already match the changes.'
+            exit 0
+          }
+          git commit -m "chore: bump package versions [skip ci]"
+          git push

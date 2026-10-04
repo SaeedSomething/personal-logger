@@ -1,0 +1,66 @@
+<Window x:Class="Logger.Windows.JournalWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
+        Title="Logger"
+        Width="980"
+        Height="720"
+        MinWidth="760"
+        MinHeight="520"
+        WindowStyle="None"
+        Background="#FF12141A"
+        ResizeMode="CanResize"
+        WindowStartupLocation="CenterScreen"
+        FontFamily="Segoe UI"
+        UseLayoutRounding="True">
+    <shell:WindowChrome.WindowChrome>
+        <shell:WindowChrome CaptionHeight="0" ResizeBorderThickness="6" GlassFrameThickness="0" UseAeroCaptionButtons="False"/>
+    </shell:WindowChrome.WindowChrome>
+    <DockPanel>
+        <Border DockPanel.Dock="Top" Height="42" BorderBrush="{StaticResource LineBrush}" BorderThickness="0,0,0,1" Background="#FF12141A" MouseLeftButtonDown="Title_MouseLeftButtonDown">
+            <Grid>
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="16,0">
+                    <Ellipse Width="8" Height="8" Fill="{StaticResource AccentBrush}" Margin="0,0,10,0"/>
+                    <TextBlock Text="Logger" Foreground="{StaticResource TextBrush}" FontSize="14" VerticalAlignment="Center"/>
+                </StackPanel>
+                <StackPanel x:Name="CaptionButtons" Orientation="Horizontal" HorizontalAlignment="Right">
+                    <Button Content="—" Style="{StaticResource CaptionButton}" Click="Minimize_Click"/>
+                    <Button Content="□" Style="{StaticResource CaptionButton}" Click="Maximize_Click"/>
+                    <Button Content="×" Style="{StaticResource CaptionButton}" Click="Close_Click"/>
+                </StackPanel>
+            </Grid>
+        </Border>
+        <ScrollViewer x:Name="Scroller" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+            <StackPanel Margin="22,16,22,28">
+                <DockPanel Margin="0,0,0,8">
+                    <StackPanel Orientation="Horizontal" DockPanel.Dock="Right">
+                        <Button x:Name="Range7" Content="7d" Style="{StaticResource GhostButton}" Click="Range_Click" Tag="7"/>
+                        <Button x:Name="Range30" Content="30d" Style="{StaticResource GhostButton}" Click="Range_Click" Tag="30"/>
+                        <Button x:Name="RangeAll" Content="All" Style="{StaticResource GhostButton}" Click="Range_Click" Tag="0"/>
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                        <TextBlock x:Name="FocusLabel" Text="All tasks" Foreground="{StaticResource TextBrush}" FontSize="16" VerticalAlignment="Center"/>
+                        <Button x:Name="ClearFocus" Content="All tasks" Style="{StaticResource GhostButton}" Margin="12,0,0,0" Click="ClearFocus_Click" Visibility="Collapsed"/>
+                    </StackPanel>
+                </DockPanel>
+                <TextBlock x:Name="Totals" Foreground="{StaticResource MutedBrush}" FontSize="12" Margin="0,0,0,14"/>
+
+                <TextBlock Text="OPEN" Style="{StaticResource SectionLabel}" Margin="0,4,0,6"/>
+                <StackPanel x:Name="OpenHost"/>
+                <TextBlock x:Name="OpenEmpty" Text="Nothing running." Foreground="{StaticResource MutedBrush}" Margin="0,0,0,16"/>
+
+                <TextBlock Text="EXPECTED VS ACTUAL" Style="{StaticResource SectionLabel}" Margin="0,8,0,6"/>
+                <StackPanel x:Name="ChartHost"/>
+                <TextBlock x:Name="ChartEmpty" Text="No spans in this range yet." Foreground="{StaticResource MutedBrush}" Margin="0,0,0,16"/>
+
+                <TextBlock Text="HABIT" Style="{StaticResource SectionLabel}" Margin="0,8,0,6"/>
+                <TextBlock x:Name="HabitSummary" Foreground="{StaticResource MutedBrush}" FontSize="13" TextWrapping="Wrap"/>
+                <WrapPanel x:Name="HabitDays" Margin="0,10,0,18"/>
+
+                <TextBlock Text="LOG" Style="{StaticResource SectionLabel}" Margin="0,4,0,6"/>
+                <StackPanel x:Name="LogHost"/>
+                <TextBlock x:Name="LogEmpty" Text="No spans in this range." Foreground="{StaticResource MutedBrush}"/>
+            </StackPanel>
+        </ScrollViewer>
+    </DockPanel>
+</Window>

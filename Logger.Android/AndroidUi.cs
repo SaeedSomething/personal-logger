@@ -9,7 +9,7 @@ namespace Logger.Android;
 static class AndroidUi
 {
     public static readonly Color Bg = Color.ParseColor("#FF12141A");
-    public static readonly Color Card = Color.ParseColor("#FF1A1D27");
+    public static readonly Color CardBg = Color.ParseColor("#FF1A1D27");
     public static readonly Color Line = Color.ParseColor("#FF2C3140");
     public static readonly Color Text = Color.ParseColor("#FFE8E6E3");
     public static readonly Color Muted = Color.ParseColor("#FF8B909C");
@@ -32,7 +32,7 @@ static class AndroidUi
     public static LinearLayout Card(Context context)
     {
         var card = new LinearLayout(context) { Orientation = Orientation.Vertical };
-        card.SetBackgroundColor(Card);
+        card.SetBackgroundColor(CardBg);
         var pad = Dp(context, 12);
         card.SetPadding(pad, Dp(context, 10), pad, Dp(context, 10));
         var layout = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MatchParent, ViewGroup.LayoutParams.WrapContent);

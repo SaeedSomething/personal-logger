@@ -30,7 +30,7 @@ CloseApplications=yes
 RestartApplications=no
 
 [Files]
-Source: "..\artifacts\win-publish\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "..\artifacts\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{group}\Logger"; Filename: "{app}\{#MyAppExeName}"

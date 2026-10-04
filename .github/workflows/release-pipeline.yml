@@ -255,22 +255,46 @@ jobs:
             -p:InformationalVersion=$env:RELEASE_VERSION
           if ($LASTEXITCODE -ne 0) { throw 'Android publish failed.' }
 
-          $apks = @(Get-ChildItem -Path 'Logger.Android\bin' -Recurse -Filter '*.apk' | Where-Object {
-              $_.Name -notmatch 'Unaligned' -and $_.FullName -match '[\\/]publish[\\/]'
+          $apks = @(Get-ChildItem -Path 'Logger.Android\bin' -Recurse -Filter '*-Signed.apk' | Where-Object {
+              $_.FullName -match '[\\/]publish[\\/]'
             })
-          if ($apks.Count -eq 0) {
-            $apks = @(Get-ChildItem -Path 'Logger.Android\bin' -Recurse -Filter '*.apk' | Where-Object { $_.Name -notmatch 'Unaligned' })
-          }
-          if ($apks.Count -eq 0) { throw 'No APK was produced.' }
+          if ($apks.Count -eq 0) { throw 'No signed APK was produced.' }
 
-          if ($apks.Count -eq 1) {
-            Copy-Item $apks[0].FullName "artifacts\Logger-$env:RELEASE_VERSION.apk" -Force
-          } else {
-            foreach ($apk in $apks) {
-              $abi = 'android'
-              if ($apk.FullName -match 'android-(arm64|arm|x64|x86)') { $abi = $Matches[1] }
-              Copy-Item $apk.FullName "artifacts\Logger-$env:RELEASE_VERSION-$abi.apk" -Force
+          $copied = @{}
+          foreach ($apk in $apks) {
+            if ($apks.Count -eq 1) {
+              $dest = "artifacts\Logger-$env:RELEASE_VERSION.apk"
+            } else {
+              if ($apk.FullName -notmatch 'android-(arm64|arm|x64|x86)([\\/]|$)') {
+                throw "Could not tell which ABI this signed APK is for: $($apk.FullName)"
+              }
+              $dest = "artifacts\Logger-$env:RELEASE_VERSION-$($Matches[1]).apk"
             }
+            if ($copied.ContainsKey($dest)) {
+              throw "Two signed APKs would both be copied to ${dest}: $($copied[$dest]) and $($apk.FullName)"
+            }
+            Copy-Item $apk.FullName $dest -Force
+            $copied[$dest] = $apk.FullName
+            Write-Host "Copied signed APK $($apk.FullName) -> $dest"
+          }
+
+          $sdkRoots = @(
+            $env:ANDROID_SDK_ROOT,
+            $env:ANDROID_HOME,
+            (Join-Path $env:LOCALAPPDATA 'Android\Sdk')
+          ) | Where-Object { $_ -and (Test-Path $_) } | Select-Object -Unique
+          $apksigner = $null
+          foreach ($root in $sdkRoots) {
+            $candidate = Get-ChildItem -Path (Join-Path $root 'build-tools') -Filter 'apksigner.bat' -Recurse -ErrorAction SilentlyContinue |
+              Sort-Object FullName -Descending |
+              Select-Object -First 1
+            if ($candidate) { $apksigner = $candidate.FullName; break }
+          }
+          if (-not $apksigner) { throw 'apksigner was not found. The signed APK was not verified.' }
+
+          foreach ($dest in $copied.Keys) {
+            & $apksigner verify --verbose $dest
+            if ($LASTEXITCODE -ne 0) { throw "Signature verification failed: $dest" }
           }
 
       - name: Publish GitHub release

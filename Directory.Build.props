@@ -1,6 +1,6 @@
 <Project>
   <PropertyGroup>
     <!-- Last released product version. Release automation bumps this on main. -->
-    <LoggerVersion>1.1.0</LoggerVersion>
+    <LoggerVersion>1.2.0</LoggerVersion>
   </PropertyGroup>
 </Project>

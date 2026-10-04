@@ -1,0 +1,9 @@
+{
+    "dotrush.roslyn.projectOrSolutionFiles": [
+        "d:\\Projects\\personal-logger\\PersonalLogger.slnx",
+        "d:\\Projects\\personal-logger\\Logger.Android\\Logger.Android.csproj",
+        "d:\\Projects\\personal-logger\\Logger.Core\\Logger.Core.csproj",
+        "d:\\Projects\\personal-logger\\Logger.Core.Tests\\Logger.Core.Tests.csproj",
+        "d:\\Projects\\personal-logger\\Logger.Windows\\Logger.Windows.csproj"
+    ]
+}

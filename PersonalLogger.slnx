@@ -1,0 +1,6 @@
+<Solution>
+  <Project Path="Logger.Android/Logger.Android.csproj" />
+  <Project Path="Logger.Core/Logger.Core.csproj" />
+  <Project Path="Logger.Core.Tests/Logger.Core.Tests.csproj" />
+  <Project Path="Logger.Windows/Logger.Windows.csproj" />
+</Solution>

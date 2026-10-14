@@ -11,8 +11,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <ApplicationId>com.companyname.Logger.Android</ApplicationId>
     <Version>1.0.1</Version>
-    <ApplicationVersion>1004000</ApplicationVersion>
-    <ApplicationDisplayVersion>1.4.0</ApplicationDisplayVersion>
+    <ApplicationVersion>1005000</ApplicationVersion>
+    <ApplicationDisplayVersion>1.5.0</ApplicationDisplayVersion>
     <!--
       Enables trim analyzers and full trimming during Release mode.
       To learn more, see: https://learn.microsoft.com/dotnet/core/deploying/trimming/trimming-options#trimming-granularity

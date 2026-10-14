@@ -86,14 +86,31 @@ Write-Utf8 (Join-Path $productRepo 'Logger.Android/Logger.Android.csproj') @"
   </PropertyGroup>
 </Project>
 "@
+Write-Utf8 (Join-Path $productRepo 'package.json') '{ "name": "personal-logger", "version": "1.2.3" }'
+Write-Utf8 (Join-Path $productRepo 'apps/web/package.json') '{ "name": "@personal-logger/web", "version": "1.2.3" }'
+Write-Utf8 (Join-Path $productRepo 'apps/desktop/package.json') '{ "name": "@personal-logger/desktop", "version": "1.2.3" }'
+Write-Utf8 (Join-Path $productRepo 'packages/domain/package.json') '{ "name": "@personal-logger/domain", "version": "1.2.3" }'
+Write-Utf8 (Join-Path $productRepo 'apps/desktop/src-tauri/tauri.conf.json') '{ "productName": "Personal Logger", "version": "1.2.3" }'
+Write-Utf8 (Join-Path $productRepo 'apps/desktop/src-tauri/Cargo.toml') @"
+[package]
+name = "personal-logger"
+version = "1.2.3"
+"@
 $product = Update-ProductVersionFiles -RepoRoot $productRepo -Bump minor
-Assert-Equal $product.Version '1.3.0' 'product minor'
-Assert-Equal $product.VersionCode 1003000 'product android code'
+Assert-equal $product.Version '1.3.0' 'product minor'
+Assert-equal $product.VersionCode 1003000 'product android code'
 $androidText = [System.IO.File]::ReadAllText((Join-Path $productRepo 'Logger.Android/Logger.Android.csproj'))
 if ($androidText -notmatch '<Version>1.4.0</Version>') { throw 'Product bump changed the package version.' }
 if ($androidText -notmatch '<ApplicationDisplayVersion>1.3.0</ApplicationDisplayVersion>') { throw 'Android display version was not updated.' }
 if ($androidText -notmatch '<ApplicationVersion>1003000</ApplicationVersion>') { throw 'Android versionCode was not updated.' }
+$rootPkg = [System.IO.File]::ReadAllText((Join-Path $productRepo 'package.json'))
+if ($rootPkg -notmatch '"version": "1.3.0"') { throw 'Root package.json version was not updated.' }
+$tauriConf = [System.IO.File]::ReadAllText((Join-Path $productRepo 'apps/desktop/src-tauri/tauri.conf.json'))
+if ($tauriConf -notmatch '"version": "1.3.0"') { throw 'tauri.conf.json version was not updated.' }
+$cargoToml = [System.IO.File]::ReadAllText((Join-Path $productRepo 'apps/desktop/src-tauri/Cargo.toml'))
+if ($cargoToml -notmatch 'version = "1.3.0"') { throw 'Cargo.toml version was not updated.' }
 Remove-Item -Recurse -Force $productRepo
+
 
 $repo = New-TestRepo
 New-PackageProject $repo 'Logger.Core' '1.0.0' 'class Core { }'
@@ -146,6 +163,12 @@ Assert-Equal $applied[0].Name 'Logger.Windows' 'apply package name'
 Assert-Equal $applied[0].To '1.0.1' 'apply patch'
 $again = @(Invoke-PackageVersionBump -RepoRoot $repo -Mode apply -BaseRef 'HEAD~1')
 Assert-Equal $again.Count 0 'apply does not bump twice'
+
+$clean = @(Invoke-PackageVersionBump -RepoRoot $repo -Mode pre-commit)
+Assert-Equal $clean.Count 0 'pre-commit with a clean index is not an error'
+$sinceHead = @(Invoke-PackageVersionBump -RepoRoot $repo -Mode apply -BaseRef 'HEAD')
+Assert-Equal $sinceHead.Count 0 'apply with no commits since the base is not an error'
+Invoke-PackageVersionBump -RepoRoot $repo -Mode check -BaseRef 'HEAD' | Out-Null
 
 $planRepo = New-TestRepo
 Write-Utf8 (Join-Path $planRepo 'note.txt') 'init'

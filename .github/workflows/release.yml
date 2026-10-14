@@ -4,6 +4,23 @@ on:
   push:
     branches:
       - main
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: auto, major, minor, or patch
+        required: true
+        default: auto
+        type: choice
+        options:
+          - auto
+          - major
+          - minor
+          - patch
+      legacy_dotnet:
+        description: Also build obsolete .NET artifacts
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -17,7 +34,8 @@ jobs:
   release:
     uses: ./.github/workflows/release-pipeline.yml
     with:
-      bump: auto
+      bump: ${{ github.event_name == 'workflow_dispatch' && inputs.bump || 'auto' }}
+      legacy_dotnet: ${{ github.event_name == 'workflow_dispatch' && inputs.legacy_dotnet || false }}
     permissions:
       contents: write
       pull-requests: read

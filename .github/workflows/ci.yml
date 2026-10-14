@@ -15,7 +15,7 @@ permissions:
   contents: read
 
 jobs:
-  test:
+  scripts:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -24,21 +24,71 @@ jobs:
         shell: pwsh
         run: ./scripts/test-versioning.ps1
 
-      - uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: 10.0.x
-
-      - name: Test Logger.Core
-        run: dotnet test Logger.Core.Tests/Logger.Core.Tests.csproj -c Release --verbosity minimal
-
-  windows:
-    runs-on: windows-latest
+  domain:
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: packages/domain/package-lock.json
+      - name: Domain tests
+        working-directory: packages/domain
+        run: |
+          npm ci
+          npm test
 
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+      - name: Web typecheck, lint, test, build
+        working-directory: apps/web
+        run: |
+          npm ci
+          npm run typecheck
+          npm run lint
+          npm test
+          npm run build
+
+  core-legacy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 10.0.x
+      - name: Test Logger.Core (legacy reference)
+        run: dotnet test Logger.Core.Tests/Logger.Core.Tests.csproj -c Release --verbosity minimal
 
-      - name: Build Windows app
-        run: dotnet build Logger.Windows/Logger.Windows.csproj -c Release --verbosity minimal
+  tauri-check:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: |
+            apps/web/package-lock.json
+            apps/desktop/package-lock.json
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri
+      - name: Install frontend deps
+        run: |
+          npm ci --prefix apps/web
+          npm ci --prefix apps/desktop
+      - name: Cargo check (desktop shell)
+        working-directory: apps/desktop/src-tauri
+        run: cargo check

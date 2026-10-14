@@ -181,6 +181,52 @@ function Update-ProductVersionFiles {
         }
     }
 
+    # Keep Tauri / npm package versions aligned with LoggerVersion.
+    $npmPackagePaths = @(
+        (Join-Path $RepoRoot 'package.json'),
+        (Join-Path $RepoRoot 'apps/web/package.json'),
+        (Join-Path $RepoRoot 'apps/desktop/package.json'),
+        (Join-Path $RepoRoot 'packages/domain/package.json')
+    )
+    foreach ($npmPath in $npmPackagePaths) {
+        if (-not (Test-Path $npmPath)) { continue }
+        $file = Read-RepoText $npmPath
+        $updated = [regex]::Replace(
+            $file.Text,
+            '("version"\s*:\s*")[^"]+(")',
+            { param($m) $m.Groups[1].Value + $next + $m.Groups[2].Value },
+            1)
+        if ($updated -ne $file.Text) {
+            Write-RepoText $npmPath $updated $file.Bom
+        }
+    }
+
+    $tauriConf = Join-Path $RepoRoot 'apps/desktop/src-tauri/tauri.conf.json'
+    if (Test-Path $tauriConf) {
+        $file = Read-RepoText $tauriConf
+        $updated = [regex]::Replace(
+            $file.Text,
+            '("version"\s*:\s*")[^"]+(")',
+            { param($m) $m.Groups[1].Value + $next + $m.Groups[2].Value },
+            1)
+        if ($updated -ne $file.Text) {
+            Write-RepoText $tauriConf $updated $file.Bom
+        }
+    }
+
+    $cargoToml = Join-Path $RepoRoot 'apps/desktop/src-tauri/Cargo.toml'
+    if (Test-Path $cargoToml) {
+        $file = Read-RepoText $cargoToml
+        $updated = [regex]::Replace(
+            $file.Text,
+            '(?m)^(version\s*=\s*")[^"]+(")',
+            { param($m) $m.Groups[1].Value + $next + $m.Groups[2].Value },
+            1)
+        if ($updated -ne $file.Text) {
+            Write-RepoText $cargoToml $updated $file.Bom
+        }
+    }
+
     return [pscustomobject]@{
         Previous    = $current
         Version     = $next
@@ -272,7 +318,9 @@ function Test-PackageContentChanged {
     param(
         [Parameter(Mandatory)][string]$Repo,
         [Parameter(Mandatory)]$Package,
-        [Parameter(Mandatory)][string[]]$ChangedFiles,
+        [Parameter(Mandatory)]
+        [AllowEmptyCollection()]
+        [string[]]$ChangedFiles,
         [string]$DiffBase,
         [switch]$Cached
     )
@@ -374,6 +422,10 @@ function Invoke-PackageVersionBump {
         $diffBase = "${revision}...HEAD"
         $changed = @(Get-GitLines $repo @('diff', '--name-only', '--diff-filter=ACMRD', $diffBase))
     }
+
+    # An empty list is a real result: the base already contains HEAD, or nothing
+    # relevant was staged. Mandatory [string[]] rejects it unless empty is allowed.
+    if ($changed.Count -eq 0) { return @() }
 
     $changes = @()
     foreach ($package in $packages) {

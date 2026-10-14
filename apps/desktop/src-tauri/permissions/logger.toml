@@ -1,0 +1,11 @@
+[[permission]]
+identifier = "allow-logger-commands"
+description = "Allows Personal Logger shell commands (migration, tray capture, smoke, Android notification)."
+commands.allow = [
+  "migrate_legacy_if_needed",
+  "smoke_insert_task_entry",
+  "show_capture_window",
+  "hide_capture_window",
+  "toggle_capture_window",
+  "ensure_android_ongoing_notification"
+]

@@ -1,0 +1,17 @@
+{
+  "name": "personal-logger",
+  "private": true,
+  "version": "1.3.0",
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "scripts": {
+    "test:domain": "npm test --prefix packages/domain",
+    "test:web": "npm test --prefix apps/web",
+    "typecheck": "npm run typecheck --prefix apps/web",
+    "lint": "npm run lint --prefix apps/web",
+    "build:web": "npm run build --prefix apps/web",
+    "tauri:dev": "npm run dev --prefix apps/desktop",
+    "tauri:build": "npm run build --prefix apps/desktop"
+  }
+}

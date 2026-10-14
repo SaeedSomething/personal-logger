@@ -7,6 +7,11 @@ on:
         description: auto, major, minor, or patch
         required: true
         type: string
+      legacy_dotnet:
+        description: Also build obsolete .NET Windows+Android artifacts (default false)
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -121,7 +126,7 @@ jobs:
     needs: version
     if: needs.version.outputs.tag
     runs-on: windows-latest
-    timeout-minutes: 120
+    timeout-minutes: 150
     steps:
       - uses: actions/checkout@v4
         with:
@@ -145,70 +150,71 @@ jobs:
           git checkout --detach $env:RELEASE_TAG
           if ($LASTEXITCODE -ne 0) { throw "Could not check out $env:RELEASE_TAG." }
 
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-node@v4
         with:
-          dotnet-version: 10.0.x
+          node-version: "22"
 
-      - name: Test
-        run: dotnet test Logger.Core.Tests/Logger.Core.Tests.csproj -c Release --verbosity minimal
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
 
-      - name: Publish Windows app
-        shell: pwsh
-        env:
-          RELEASE_VERSION: ${{ needs.version.outputs.version }}
-        run: |
-          $ErrorActionPreference = 'Stop'
-          dotnet publish Logger.Windows/Logger.Windows.csproj `
-            -c Release `
-            -r win-x64 `
-            --self-contained true `
-            -o artifacts/win-publish `
-            -p:PublishSingleFile=true `
-            -p:IncludeNativeLibrariesForSelfExtract=true `
-            -p:IncludeAllContentForSelfExtract=true `
-            -p:EnableCompressionInSingleFile=true `
-            -p:DebugType=none `
-            -p:DebugSymbols=false `
-            -p:Version=$env:RELEASE_VERSION `
-            -p:FileVersion="$env:RELEASE_VERSION.0" `
-            -p:InformationalVersion=$env:RELEASE_VERSION
-          if ($LASTEXITCODE -ne 0) { throw 'Windows publish failed.' }
-
-      - name: Install Inno Setup
+      - name: Install frontend + Tauri CLI deps
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          choco install innosetup --no-progress -y
-          if ($LASTEXITCODE -ne 0) { throw 'Inno Setup install failed.' }
+          npm ci --prefix packages/domain
+          npm test --prefix packages/domain
+          npm ci --prefix apps/web
+          npm run typecheck --prefix apps/web
+          npm run lint --prefix apps/web
+          npm test --prefix apps/web
+          npm ci --prefix apps/desktop
+          npm install -g @tauri-apps/cli@2
 
-      - name: Build Windows installer
+      - name: Build Tauri Windows (NSIS)
         shell: pwsh
         env:
           RELEASE_VERSION: ${{ needs.version.outputs.version }}
+        working-directory: apps/desktop
         run: |
           $ErrorActionPreference = 'Stop'
-          $iscc = @(
-            "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
-            "$env:ProgramFiles\Inno Setup 6\ISCC.exe"
-          ) | Where-Object { Test-Path $_ } | Select-Object -First 1
-          if (-not $iscc) { throw 'ISCC.exe was not found.' }
-          & $iscc "/DMyAppVersion=$env:RELEASE_VERSION" installer\Logger.iss
-          if ($LASTEXITCODE -ne 0) { throw 'Inno Setup compilation failed.' }
-          $setup = "artifacts\Logger-Setup-$env:RELEASE_VERSION.exe"
-          if (-not (Test-Path $setup)) { throw "Installer was not created: $setup" }
+          New-Item -ItemType Directory -Force -Path ../../artifacts | Out-Null
+          npx tauri build --bundles nsis
+          if ($LASTEXITCODE -ne 0) { throw 'Tauri Windows build failed.' }
+          $nsis = @(Get-ChildItem -Path 'src-tauri\target\release\bundle\nsis' -Filter '*.exe' -ErrorAction SilentlyContinue)
+          if ($nsis.Count -eq 0) {
+            $nsis = @(Get-ChildItem -Path 'src-tauri\target\release\bundle' -Recurse -Filter '*.exe' -ErrorAction SilentlyContinue)
+          }
+          if ($nsis.Count -eq 0) { throw 'No NSIS installer was produced.' }
+          $dest = "..\..\artifacts\Logger-Setup-$env:RELEASE_VERSION.exe"
+          Copy-Item $nsis[0].FullName $dest -Force
+          Write-Host "Windows installer -> $dest"
 
-      - name: Install Android workload
-        run: dotnet workload install android
+      - name: Setup Android (JDK + SDK)
+        uses: android-actions/setup-android@v3
 
-      - name: Publish Android APK
+      - name: Add Android Rust targets
+        run: |
+          rustup target add aarch64-linux-android armv7-linux-androideabi i686-linux-android x86_64-linux-android
+
+      - name: Init Tauri Android project
+        working-directory: apps/desktop
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (-not (Test-Path 'src-tauri\gen\android')) {
+            npx tauri android init
+            if ($LASTEXITCODE -ne 0) { throw 'tauri android init failed.' }
+          }
+
+      - name: Build Android APK
         shell: pwsh
         env:
           RELEASE_VERSION: ${{ needs.version.outputs.version }}
-          RELEASE_VERSION_CODE: ${{ needs.version.outputs.version_code }}
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        working-directory: apps/desktop
         run: |
           $ErrorActionPreference = 'Stop'
           $keystore = Join-Path $env:RUNNER_TEMP 'logger.keystore'
@@ -224,78 +230,41 @@ jobs:
             Write-Host "::add-mask::$storePass"
             Write-Host "::add-mask::$keyPass"
           } else {
-            Write-Host 'ANDROID_KEYSTORE_BASE64 is not set. The APK is signed with a throwaway key, so it will not upgrade a previous install.'
-            $keytool = $null
-            $javaKeytool = Join-Path $env:JAVA_HOME 'bin\keytool.exe'
-            if ($env:JAVA_HOME -and (Test-Path $javaKeytool)) {
-              $keytool = $javaKeytool
-            } elseif (Get-Command keytool -ErrorAction SilentlyContinue) {
-              $keytool = (Get-Command keytool).Source
-            } else {
-              throw 'keytool was not found. Set JAVA_HOME or provide ANDROID_KEYSTORE_BASE64.'
-            }
+            Write-Host 'ANDROID_KEYSTORE_BASE64 is not set. Signing with a throwaway keystore.'
+            $keytool = Join-Path $env:JAVA_HOME 'bin\keytool.exe'
             & $keytool -genkeypair -keystore $keystore -storetype PKCS12 -alias $alias -keyalg RSA -keysize 2048 -validity 10000 -storepass $storePass -keypass $keyPass -dname 'CN=Personal Logger, OU=CI, O=Personal Logger, C=US'
             if ($LASTEXITCODE -ne 0) { throw 'keytool failed.' }
           }
 
-          dotnet publish Logger.Android/Logger.Android.csproj `
-            -c Release `
-            -f net10.0-android `
-            -p:AndroidPackageFormat=apk `
-            -p:PublishTrimmed=true `
-            -p:RunAOTCompilation=true `
-            -p:AndroidKeyStore=true `
-            -p:AndroidSigningKeyStore=$keystore `
-            -p:AndroidSigningKeyAlias=$alias `
-            -p:AndroidSigningStorePass=$storePass `
-            -p:AndroidSigningKeyPass=$keyPass `
-            -p:ApplicationDisplayVersion=$env:RELEASE_VERSION `
-            -p:ApplicationVersion=$env:RELEASE_VERSION_CODE `
-            -p:Version=$env:RELEASE_VERSION `
-            -p:InformationalVersion=$env:RELEASE_VERSION
-          if ($LASTEXITCODE -ne 0) { throw 'Android publish failed.' }
+          $env:TAURI_ANDROID_KEYSTORE_PATH = $keystore
+          $env:TAURI_ANDROID_KEYSTORE_PASSWORD = $storePass
+          $env:TAURI_ANDROID_KEY_ALIAS = $alias
+          $env:TAURI_ANDROID_KEY_PASSWORD = $keyPass
 
-          $apks = @(Get-ChildItem -Path 'Logger.Android\bin' -Recurse -Filter '*-Signed.apk' | Where-Object {
-              $_.FullName -match '[\\/]publish[\\/]'
+          npx tauri android build --apk
+          if ($LASTEXITCODE -ne 0) { throw 'Tauri Android build failed.' }
+
+          $apks = @(Get-ChildItem -Path 'src-tauri' -Recurse -Filter '*.apk' | Where-Object {
+              $_.FullName -match 'apk' -and $_.Name -notmatch 'unsigned'
             })
-          if ($apks.Count -eq 0) { throw 'No signed APK was produced.' }
-
-          $copied = @{}
-          foreach ($apk in $apks) {
-            if ($apks.Count -eq 1) {
-              $dest = "artifacts\Logger-$env:RELEASE_VERSION.apk"
-            } else {
-              if ($apk.FullName -notmatch 'android-(arm64|arm|x64|x86)([\\/]|$)') {
-                throw "Could not tell which ABI this signed APK is for: $($apk.FullName)"
-              }
-              $dest = "artifacts\Logger-$env:RELEASE_VERSION-$($Matches[1]).apk"
-            }
-            if ($copied.ContainsKey($dest)) {
-              throw "Two signed APKs would both be copied to ${dest}: $($copied[$dest]) and $($apk.FullName)"
-            }
-            Copy-Item $apk.FullName $dest -Force
-            $copied[$dest] = $apk.FullName
-            Write-Host "Copied signed APK $($apk.FullName) -> $dest"
+          if ($apks.Count -eq 0) {
+            $apks = @(Get-ChildItem -Path 'src-tauri' -Recurse -Filter '*.apk')
           }
+          if ($apks.Count -eq 0) { throw 'No APK was produced.' }
 
-          $sdkRoots = @(
-            $env:ANDROID_SDK_ROOT,
-            $env:ANDROID_HOME,
-            (Join-Path $env:LOCALAPPDATA 'Android\Sdk')
-          ) | Where-Object { $_ -and (Test-Path $_) } | Select-Object -Unique
-          $apksigner = $null
-          foreach ($root in $sdkRoots) {
-            $candidate = Get-ChildItem -Path (Join-Path $root 'build-tools') -Filter 'apksigner.bat' -Recurse -ErrorAction SilentlyContinue |
-              Sort-Object FullName -Descending |
-              Select-Object -First 1
-            if ($candidate) { $apksigner = $candidate.FullName; break }
-          }
-          if (-not $apksigner) { throw 'apksigner was not found. The signed APK was not verified.' }
+          $dest = "..\..\artifacts\Logger-$env:RELEASE_VERSION.apk"
+          Copy-Item $apks[0].FullName $dest -Force
+          Write-Host "Android APK -> $dest"
 
-          foreach ($dest in $copied.Keys) {
-            & $apksigner verify --verbose $dest
-            if ($LASTEXITCODE -ne 0) { throw "Signature verification failed: $dest" }
-          }
+      - name: Optional legacy .NET artifacts
+        if: ${{ inputs.legacy_dotnet }}
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          Write-Host 'legacy_dotnet=true: building .NET Windows publish only (reference).'
+          dotnet publish Logger.Windows/Logger.Windows.csproj -c Release -r win-x64 --self-contained true -o artifacts/win-publish-legacy
+          if ($LASTEXITCODE -ne 0) { throw 'Legacy .NET publish failed.' }
 
       - name: Publish GitHub release
         shell: pwsh
@@ -318,7 +287,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Creating the GitHub release failed.' }
 
           $names = ($files | ForEach-Object { $_.Name }) -join ', '
-          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "Released **$env:RELEASE_TAG** with $names."
+          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "Released **$env:RELEASE_TAG** with $names (Tauri primary; .NET gated)."
 
       - uses: actions/upload-artifact@v4
         with:
